@@ -1,0 +1,432 @@
+!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>사격 마스터: 멀티 타겟 진화</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #1a1a1a;
+            font-family: 'Pretendard', sans-serif;
+            user-select: none;
+            touch-action: manipulation;
+        }
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            cursor: crosshair;
+            overflow: hidden;
+        }
+        .target {
+            position: absolute;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: width 0.3s ease, height 0.3s ease;
+            will-change: transform, left, top;
+        }
+        .ring { position: absolute; border-radius: 50%; border: 1px solid rgba(0,0,0,0.1); }
+        .ring-5 { width: 100%; height: 100%; background: white; z-index: 10; }
+        .ring-4 { width: 80%; height: 80%; background: white; border: 2px solid #ccc; z-index: 20; }
+        .ring-3 { width: 60%; height: 60%; background: black; z-index: 30; }
+        .ring-2 { width: 40%; height: 40%; background: #3b82f6; z-index: 40; }
+        .ring-1 { width: 20%; height: 20%; background: #ef4444; z-index: 50; }
+
+        .bullet-hole {
+            position: absolute;
+            width: 6px;
+            height: 6px;
+            background: #222;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 100;
+            animation: fadeOut 1.5s forwards;
+        }
+
+        .score-popup {
+            position: absolute;
+            font-weight: 900;
+            font-size: 1.8rem;
+            pointer-events: none;
+            z-index: 110;
+            animation: floatUp 0.6s ease-out forwards;
+            text-shadow: 0 0 10px rgba(0,0,0,0.8);
+        }
+
+        @keyframes fadeOut { 0% { opacity: 1; } 100% { opacity: 0; } }
+        @keyframes floatUp { 
+            0% { transform: translateY(0) scale(1); opacity: 1; } 
+            100% { transform: translateY(-60px) scale(1.2); opacity: 0; } 
+        }
+
+        .recoil { animation: shake 0.1s ease-in-out; }
+        @keyframes shake {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.02) translate(2px, -5px); }
+            100% { transform: scale(1); }
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            display: flex;
+            gap: 15px;
+            pointer-events: none;
+            z-index: 200;
+        }
+
+        .stats-box {
+            background: rgba(0, 0, 0, 0.7);
+            padding: 12px 24px;
+            border-radius: 16px;
+            color: white;
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255,255,255,0.15);
+            min-width: 120px;
+        }
+
+        #overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(0,0,0,0.85);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 300;
+            color: white;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .level-up-anim {
+            animation: levelUpText 1s ease-in-out;
+        }
+        @keyframes levelUpText {
+            0% { transform: scale(1); color: white; }
+            50% { transform: scale(1.5); color: #fbbf24; }
+            100% { transform: scale(1); color: white; }
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="ui-layer">
+        <div class="stats-box">
+            <div class="text-[10px] uppercase tracking-widest opacity-60 mb-1">Score</div>
+            <div id="score-display" class="text-3xl font-black text-yellow-400">0</div>
+        </div>
+        <div class="stats-box">
+            <div class="text-[10px] uppercase tracking-widest opacity-60 mb-1">Time</div>
+            <div id="time-display" class="text-3xl font-black">60</div>
+        </div>
+        <div class="stats-box" id="level-container">
+            <div class="text-[10px] uppercase tracking-widest opacity-60 mb-1">Level</div>
+            <div id="level-display" class="text-3xl font-black">1</div>
+        </div>
+        <div class="stats-box ml-auto">
+            <div class="text-[10px] uppercase tracking-widest opacity-60 mb-1">Targets</div>
+            <div id="target-count-display" class="text-3xl font-black text-blue-400">1</div>
+        </div>
+    </div>
+
+    <div id="target-wrapper" style="position: relative; width: 100%; height: 100%;">
+        <!-- 과녁들이 동적으로 생성됩니다 -->
+    </div>
+
+    <div id="overlay">
+        <h1 id="overlay-title" class="text-6xl font-black mb-4 italic tracking-tighter">SHOOTING MASTER</h1>
+        <p id="overlay-desc" class="text-xl text-gray-400 mb-10 text-center">
+            레벨 6부터 2레벨마다 과녁이 하나씩 추가됩니다!<br>
+            더 많은 타겟을 빠르게 제거하세요.
+        </p>
+        <button id="start-btn" class="bg-yellow-500 hover:bg-yellow-400 text-black px-12 py-4 rounded-2xl font-black text-2xl transition-all active:scale-95 pointer-events-auto shadow-[0_0_20px_rgba(234,179,8,0.4)]">
+            임무 시작
+        </button>
+    </div>
+</div>
+
+<script>
+    const gameContainer = document.getElementById('game-container');
+    const targetWrapper = document.getElementById('target-wrapper');
+    const scoreDisplay = document.getElementById('score-display');
+    const timeDisplay = document.getElementById('time-display');
+    const levelDisplay = document.getElementById('level-display');
+    const targetCountDisplay = document.getElementById('target-count-display');
+    const overlay = document.getElementById('overlay');
+    const startBtn = document.getElementById('start-btn');
+    
+    let score = 0;
+    let timeLeft = 60;
+    let shotsFired = 0;
+    let shotsHit = 0;
+    let level = 1;
+    let gameActive = false;
+    let timerInterval;
+    let baseSize = 200;
+    let targets = [];
+
+    // 현재 레벨에 따른 목표 과녁 개수 계산
+    function getTargetCount() {
+        if (level < 6) return 1;
+        // 레벨 6에서 2개, 레벨 8에서 3개, 레벨 10에서 4개...
+        return Math.floor((level - 6) / 2) + 2;
+    }
+
+    function createTarget() {
+        const targetEl = document.createElement('div');
+        targetEl.className = 'target';
+        targetEl.innerHTML = `
+            <div class="ring ring-5"></div>
+            <div class="ring ring-4"></div>
+            <div class="ring ring-3"></div>
+            <div class="ring ring-2"></div>
+            <div class="ring ring-1"></div>
+        `;
+        
+        const currentSize = Math.max(60, baseSize - (level - 1) * 12);
+        targetEl.style.width = `${currentSize}px`;
+        targetEl.style.height = `${currentSize}px`;
+
+        const padding = currentSize;
+        let x = Math.random() * (window.innerWidth - padding * 2) + padding / 2;
+        let y = Math.random() * (window.innerHeight - padding * 2) + padding / 2;
+        
+        targetEl.style.left = `${x}px`;
+        targetEl.style.top = `${y}px`;
+
+        targetWrapper.appendChild(targetEl);
+
+        let velX = 0;
+        let velY = 0;
+
+        // 레벨 5부터 물리 속도 부여
+        if (level >= 5) {
+            const speedMultiplier = (level - 4) * 0.8;
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 1.5 + speedMultiplier;
+            velX = Math.cos(angle) * speed;
+            velY = Math.sin(angle) * speed;
+        }
+
+        const targetObj = {
+            el: targetEl,
+            x: x,
+            y: y,
+            vx: velX,
+            vy: velY,
+            size: currentSize
+        };
+
+        targets.push(targetObj);
+    }
+
+    function updatePhysics() {
+        if (!gameActive) return;
+
+        targets.forEach(t => {
+            if (level < 5) return;
+
+            t.x += t.vx;
+            t.y += t.vy;
+
+            if (t.x <= 0 || t.x + t.size >= window.innerWidth) {
+                t.vx *= -1;
+                t.x = Math.max(0, Math.min(t.x, window.innerWidth - t.size));
+            }
+            if (t.y <= 0 || t.y + t.size >= window.innerHeight) {
+                t.vy *= -1;
+                t.y = Math.max(0, Math.min(t.y, window.innerHeight - t.size));
+            }
+
+            t.el.style.left = `${t.x}px`;
+            t.el.style.top = `${t.y}px`;
+        });
+        
+        requestAnimationFrame(updatePhysics);
+    }
+
+    function checkLevelUp() {
+        const newLevel = Math.floor(score / 500) + 1;
+        if (newLevel > level) {
+            level = newLevel;
+            levelDisplay.innerText = level;
+            levelDisplay.classList.add('level-up-anim');
+            setTimeout(() => levelDisplay.classList.remove('level-up-anim'), 1000);
+            
+            timeLeft += 5;
+            showScorePopup(window.innerWidth/2, window.innerHeight/2, "LEVEL UP! +5s", "#fbbf24");
+            
+            adjustTargetCount();
+        }
+    }
+
+    function adjustTargetCount() {
+        const desiredCount = getTargetCount();
+        targetCountDisplay.innerText = desiredCount;
+
+        // 과녁 개수가 부족하면 생성
+        while (targets.length < desiredCount) {
+            createTarget();
+        }
+    }
+
+    function updateStats() {
+        scoreDisplay.innerText = score.toLocaleString();
+        timeDisplay.innerText = Math.max(0, Math.ceil(timeLeft));
+        targetCountDisplay.innerText = getTargetCount();
+        
+        if (timeLeft <= 10) {
+            timeDisplay.classList.add('text-red-500', 'animate-pulse');
+        } else {
+            timeDisplay.classList.remove('text-red-500', 'animate-pulse');
+        }
+    }
+
+    function shoot(e) {
+        if (!gameActive || e.target === startBtn) return;
+
+        shotsFired++;
+        gameContainer.classList.remove('recoil');
+        void gameContainer.offsetWidth;
+        gameContainer.classList.add('recoil');
+
+        createBulletHole(e.clientX, e.clientY);
+
+        let hitAny = false;
+
+        for (let i = targets.length - 1; i >= 0; i--) {
+            const t = targets[i];
+            const centerX = t.x + t.size / 2;
+            const centerY = t.y + t.size / 2;
+            const distance = Math.sqrt(Math.pow(e.clientX - centerX, 2) + Math.pow(e.clientY - centerY, 2));
+            const radius = t.size / 2;
+
+            if (distance <= radius) {
+                shotsHit++;
+                hitAny = true;
+                const hitPercent = distance / radius; 
+                
+                let points = 0;
+                let label = "";
+                let color = "#fff";
+
+                if (hitPercent <= 0.15) {
+                    points = 150; label = "BULLSEYE! 150"; color = "#ef4444";
+                } else if (hitPercent <= 0.4) {
+                    points = 100; label = "PERFECT! 100"; color = "#fbbf24";
+                } else if (hitPercent <= 0.7) {
+                    points = 50; label = "GREAT! 50"; color = "#3b82f6";
+                } else {
+                    points = 20; label = "HIT! 20"; color = "#fff";
+                }
+
+                score += points;
+                showScorePopup(e.clientX, e.clientY, label, color);
+                
+                t.el.remove();
+                targets.splice(i, 1);
+                
+                checkLevelUp();
+                adjustTargetCount();
+                break;
+            }
+        }
+
+        if (!hitAny) {
+            showScorePopup(e.clientX, e.clientY, "MISS", "#444");
+        }
+
+        updateStats();
+    }
+
+    function createBulletHole(x, y) {
+        const hole = document.createElement('div');
+        hole.className = 'bullet-hole';
+        hole.style.left = `${x - 3}px`;
+        hole.style.top = `${y - 3}px`;
+        gameContainer.appendChild(hole);
+        setTimeout(() => hole.remove(), 1500);
+    }
+
+    function showScorePopup(x, y, text, color) {
+        const popup = document.createElement('div');
+        popup.className = 'score-popup';
+        popup.innerText = text;
+        popup.style.left = `${x}px`;
+        popup.style.top = `${y - 20}px`;
+        popup.style.color = color;
+        gameContainer.appendChild(popup);
+        setTimeout(() => popup.remove(), 600);
+    }
+
+    function startGame() {
+        score = 0;
+        timeLeft = 60;
+        shotsFired = 0;
+        shotsHit = 0;
+        level = 1;
+        gameActive = true;
+        
+        targetWrapper.innerHTML = '';
+        targets = [];
+        
+        levelDisplay.innerText = level;
+        overlay.style.display = 'none';
+        updateStats();
+        
+        createTarget();
+
+        if (timerInterval) clearInterval(timerInterval);
+        timerInterval = setInterval(() => {
+            timeLeft -= 0.1;
+            if (timeLeft <= 0) endGame();
+            updateStats();
+        }, 100);
+
+        requestAnimationFrame(updatePhysics);
+    }
+
+    function endGame() {
+        gameActive = false;
+        clearInterval(timerInterval);
+        
+        overlay.style.display = 'flex';
+        document.getElementById('overlay-title').innerText = "임무 완료";
+        const acc = shotsFired === 0 ? 0 : Math.round((shotsHit / shotsFired) * 100);
+        document.getElementById('overlay-desc').innerHTML = `
+            <div class="space-y-3">
+                <p class="text-2xl font-bold">최종 점수: <span class="text-yellow-400">${score.toLocaleString()}</span></p>
+                <div class="grid grid-cols-2 gap-4 text-sm opacity-80">
+                    <p>최종 레벨: ${level}</p>
+                    <p>최대 과녁: ${getTargetCount()}개</p>
+                    <p>정확도: ${acc}%</p>
+                    <p>명중: ${shotsHit}회</p>
+                </div>
+            </div>
+        `;
+        startBtn.innerText = "다시 도전";
+    }
+
+    gameContainer.addEventListener('mousedown', shoot);
+    startBtn.addEventListener('click', startGame);
+    window.addEventListener('resize', () => {
+        if (gameActive) {
+            targets.forEach(t => {
+                t.x = Math.min(t.x, window.innerWidth - t.size);
+                t.y = Math.min(t.y, window.innerHeight - t.size);
+            });
+        }
+    });
+</script>
+
+</body>
+</html>
